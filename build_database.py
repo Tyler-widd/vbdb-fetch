@@ -7,6 +7,7 @@ import logging
 import time
 import sys
 import os
+import shutil
 from pathlib import Path
 from typing import List, Dict
 
@@ -27,10 +28,10 @@ except ImportError:
 
 # Import team fetchers
 try:
-    from vbdb_fetch.teams.fetch_lovb_teams import fetch_lovb_teams
-    from vbdb_fetch.teams.fetch_pvf_teams import fetch_pvf_teams
-    from vbdb_fetch.teams.fetch_ncaam_teams import fetch_ncaam_teams
-    from vbdb_fetch.teams.fetch_ncaaw_teams import fetch_ncaaw_teams
+    from teams.fetch_lovb_teams import fetch_lovb_teams
+    from teams.fetch_pvf_teams import fetch_pvf_teams
+    from teams.fetch_ncaam_teams import fetch_ncaam_teams
+    from teams.fetch_ncaaw_teams import fetch_ncaaw_teams
 
     FETCHERS = {
         "LOVB": fetch_lovb_teams,
@@ -40,7 +41,7 @@ try:
     }
 except ImportError as e:
     logger.error(f"Error importing team fetchers: {e}")
-    logger.error("Make sure vbdb_fetch package is installed with all team fetchers")
+    logger.error("Make sure team fetchers are in the teams directory")
     sys.exit(1)
 
 def import_teams(db, league: str, fetch_func) -> int:
@@ -82,15 +83,22 @@ def build_database(leagues: List[str] = None, db_path: str = None) -> Dict[str, 
     
     Args:
         leagues: List of leagues to import (default: all leagues)
-        db_path: Path to the database file (default: use package default)
+        db_path: Path to the database file (default: ./vbdb.db)
         
     Returns:
         Dictionary with count of teams imported by league
     """
-    # Initialize database - now db_path should be in the current directory
+    # Initialize database with appropriate path
     if db_path is None:
         db_path = "./vbdb.db"
     
+    # Create directory if it doesn't exist
+    db_dir = os.path.dirname(db_path)
+    if db_dir and not os.path.exists(db_dir):
+        logger.info(f"Creating directory: {db_dir}")
+        os.makedirs(db_dir, exist_ok=True)
+    
+    logger.info(f"Initializing database at: {db_path}")
     db = init_db(db_path)
     
     # Default to all leagues if none specified
@@ -127,6 +135,16 @@ if __name__ == "__main__":
         "--db-path",
         help="Path to the database file (default: ./vbdb.db)"
     )
+    parser.add_argument(
+        "--no-api",
+        action="store_true",
+        help="Do not copy database to API directory"
+    )
+    parser.add_argument(
+        "--no-local",
+        action="store_true",
+        help="Do not save database to current directory"
+    )
     
     args = parser.parse_args()
     
@@ -136,11 +154,45 @@ if __name__ == "__main__":
     else:
         leagues = args.leagues
     
+    # Set the primary database path
+    primary_db_path = args.db_path
+    if primary_db_path is None:
+        if args.no_local and not args.no_api:
+            # Only save to API
+            primary_db_path = "../vbdb-api/vbdb.db"
+        else:
+            # Default to local first
+            primary_db_path = "./vbdb.db"
+    
     # Build database
-    results = build_database(leagues, args.db_path)
+    results = build_database(leagues, primary_db_path)
+    
+    # Copy to API directory if needed
+    api_db_path = "../vbdb-api/vbdb.db"
+    if not args.no_api and primary_db_path != api_db_path:
+        api_dir = os.path.dirname(api_db_path)
+        if not os.path.exists(api_dir):
+            logger.info(f"Creating API directory: {api_dir}")
+            os.makedirs(api_dir, exist_ok=True)
+        
+        logger.info(f"Copying database to API directory: {api_db_path}")
+        shutil.copy2(primary_db_path, api_db_path)
+    
+    # Copy to local directory if needed
+    local_db_path = "./vbdb.db"
+    if not args.no_local and primary_db_path != local_db_path:
+        logger.info(f"Copying database to local directory: {local_db_path}")
+        shutil.copy2(primary_db_path, local_db_path)
     
     # Print summary
     print("\nSummary:")
     for league, count in results.items():
         print(f"  {league}: {count} teams")
     print(f"  Total: {sum(results.values())} teams")
+    
+    # Print database locations
+    print("\nDatabase saved to:")
+    if not args.no_local:
+        print(f"  Local: {os.path.abspath(local_db_path)}")
+    if not args.no_api:
+        print(f"  API: {os.path.abspath(api_db_path)}")
