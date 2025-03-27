@@ -8,3 +8,4 @@ wheels/
 
 # Virtual environments
 .venv
+./data/ncaa_volleyball_schedules_2024.json
